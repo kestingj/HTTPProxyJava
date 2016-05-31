@@ -1,0 +1,5 @@
+#!/bin/bash
+
+scp *.java kestingj@attu.cs.washington.edu:~
+scp run kestingj@attu.cs.washington.edu:~
+scp makefile kestingj@attu.cs.washington.edu:~
