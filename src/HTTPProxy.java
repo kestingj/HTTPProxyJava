@@ -4,7 +4,6 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Scanner;
 import java.util.concurrent.BlockingQueue;
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -15,7 +14,7 @@ import java.util.concurrent.locks.ReentrantLock;
  */
 public class HTTPProxy {
 
-    Map<Integer, BlockingQueue<String>> buffers;
+    Map<Integer, BlockingQueue<char[]>> buffers;
     private final Lock l = new ReentrantLock();
     private int connectionID = 0;
     private ServerSocket serverSocket;
@@ -31,67 +30,14 @@ public class HTTPProxy {
     }
 
     public void run(){
-        System.out.println(1);
         while (true) {
-            System.out.println(2);
-            PrintWriter clientOut = null;
-            BufferedReader clientIn = null;
-            String request;
-            int clientToHostID = getConnectionID();
             try {
                 Socket clientSocket = serverSocket.accept();
-                System.out.println(3);
-                clientOut =
-                        new PrintWriter(clientSocket.getOutputStream(), true);
-                clientIn = new BufferedReader(
-                        new InputStreamReader(clientSocket.getInputStream()));
+                Thread setupThread = new SetupThread(clientSocket);
+                setupThread.start();
             } catch (IOException e) {
                 System.out.println(e);
             }
-            request = getModifiedRequest(clientIn);
-            System.out.println(4);
-            INetAddress address = getAddressFromMessage(request);
-            System.out.println(5);
-
-            PrintWriter hostOut = null;
-            BufferedReader hostIn = null;
-            int hostToClientID = getConnectionID();
-            InputStream i = null;
-            try {
-                Socket hostSocket = new Socket();
-                System.out.println(6);
-                InetSocketAddress addr = new InetSocketAddress(0);
-                hostSocket.bind(addr);
-                System.out.println(addr);
-                hostSocket.connect(new InetSocketAddress(address.getHost(), address.getPort()));
-                System.out.println(hostSocket.isConnected());
-                System.out.println(7);
-                hostOut =
-                        new PrintWriter(hostSocket.getOutputStream(), true);
-                hostIn = new BufferedReader(
-                        new InputStreamReader(hostSocket.getInputStream()));
-                i = hostSocket.getInputStream();
-            } catch (IOException e) {
-                e.printStackTrace();
-            }
-            boolean connect = request.startsWith("CONNECT");
-
-            BlockingQueue<String> clientToHost = new LinkedBlockingQueue<>();
-            BlockingQueue<String> hostToClient = new LinkedBlockingQueue<>();
-            clientToHost.add(request);
-            buffers.put(clientToHostID, clientToHost);
-            buffers.put(hostToClientID, hostToClient);
-
-            System.out.println(8);
-            Thread clientRead = new readThread(clientIn, clientToHostID, connect);
-            Thread clientWrite = new writeThread(clientOut, hostToClientID, connect);
-            Thread hostRead = new readThread(hostIn, hostToClientID, connect);
-            Thread hostWrite = new writeThread(hostOut, clientToHostID, connect);
-            hostWrite.start();
-            hostRead.start();
-            clientWrite.start();
-            clientRead.start();
-            System.out.println(9);
         }
     }
 
@@ -107,7 +53,6 @@ public class HTTPProxy {
                 requestLine = line;
             }
             if(line.toLowerCase().startsWith("host")) {
-                System.out.println(line);
                 String[] splitLine = line.split(":", 2);
                 String url = splitLine[1].trim().split(" ")[0];
                 String[] split = url.split(":");
@@ -116,49 +61,10 @@ public class HTTPProxy {
                     port = Integer.parseInt(split[1].split("/")[0]);
                 }
 
-
-//                try {
-//                    URI url = new URI(splitLine[1]);
-//                    host = url.getHost();
-//                    port = url.getPort();
-////                } catch (MalformedURLException e) {
-////                    e.printStackTrace();
-//                } catch (URISyntaxException e) {
-//                    e.printStackTrace();
-//                }
             }
         }
         if (port == -1) {
             String[] splitLine = requestLine.split(" ");
-//            try {
-//                String urlString = splitLine[1];
-//                try {
-//                    URL url = new URL(urlString);
-//                } catch (MalformedURLException e) {
-//                    try {
-//                        String[] array = urlString.split(":");
-//                        if (array.length == 3) {
-//                            port = Integer.parseInt(array[2].split("/")[0]);
-//                        } else if (array.length == 2) {
-//                            if (array[0].equals("http")) {
-//                                port = 80;
-//                            } else if (array[0].equals("https")) {
-//                                port = 443;
-//                            } else {
-//                                port = Integer.parseInt(array[1].split("/")[0]);
-//                            }
-//                        } else {
-//                            if (requestLine.startsWith("CONNECT")) {
-//                                port = 443;
-//                            } else {
-//                                port = 80;
-//                            }
-//                        }
-//
-//                    } catch (ArrayIndexOutOfBoundsException error) {
-//                        System.out.println("FUCKED");
-//                    }
-//                }
 
             try {
                 URI uri = new URI(splitLine[1]);
@@ -172,21 +78,12 @@ public class HTTPProxy {
                 }
             } catch (URISyntaxException e) {
                 System.out.println("FUCKED");
+            } catch (ArrayIndexOutOfBoundsException e) {
+                System.out.println("CANT BE SPLIT: ");
+                System.out.println(requestLine);
             }
 
-//                port = url.getPort();
-//                if (port == -1) {
-//                    String protocol = url.getScheme();
-//                    if(protocol.equals("https")) {
-//                        port = 443;
-//                    } else {
-//                        port = 80;
-//                    }
-//                }
-//            } catch (MalformedURLException e) {
-//                e.printStackTrace();
-
-            }
+        }
 
         if (host.equals("")) {
             System.out.println("STILL NO HOST");
@@ -202,7 +99,7 @@ public class HTTPProxy {
         String request = "";
         System.out.println("PRELOOP");
         while(true) {
-            String line = null;
+            String line;
             try {
                 line = in.readLine();
             } catch (IOException e) {
@@ -214,11 +111,13 @@ public class HTTPProxy {
             }
             if (request.equals("")) {
                 line = line.replace("HTTP/1.1", "HTTP/1.0");
+                System.out.println(">>> " + line);
             } else if (line.toLowerCase().startsWith("connection") || line.toLowerCase().startsWith("proxy-connection")) {
                 line = line.replace("keep-alive", "close");
             }
-            request = request + line + "\n";
+            request = request + line + "\r\n";
         }
+        request += "\r\n";
         System.out.println("POSTLOOP");
         return request;
     }
@@ -240,21 +139,46 @@ public class HTTPProxy {
         private BufferedReader in;
         private int connectionID;
         private boolean connect;
+        private InputStream i;
 
-        readThread(BufferedReader in, int connectionID, boolean connect) {
+        readThread(BufferedReader in, int connectionID, boolean connect, InputStream i) {
+            System.out.println(in);
             this.in = in;
             this.connectionID = connectionID;
             this.connect = connect;
+            this.i = i;
         }
 
         public void run () {
+            System.out.println("read thread: " + connectionID);
+            BlockingQueue<char[]> buffer = buffers.get(connectionID);
+            System.out.println("BUFFER SIZE: " + buffer.size());
             try {
                 do {
                     System.out.println("IN READ");
                     System.out.println(in.ready());
-                    String packet = in.readLine();
-                    System.out.println("read:" + packet);
-                    buffers.get(connectionID).add(packet);
+//                    char[] packetBuffer = new char[65000];
+                    int counter = 0;
+                    char[] packetBuffer = new char[8192];
+                    try {
+//                        while ((in.read(packetBuffer, 0, 65000)) != -1) {
+                        while (in.read(packetBuffer) > 0) {
+                            System.out.println(in.ready());
+                            //String packet = new String(packetBuffer);
+//                            System.out.println("in: " + packet.length());
+                            try {
+                                buffer.put(packetBuffer);
+                            } catch (InterruptedException e) {
+                                e.printStackTrace();
+                            }
+                            System.out.println("read thread: " + connectionID + "counter: " + counter);
+                            counter++;
+                        }
+                        System.out.println("OUT OF READ LOOP");
+                    } catch (SocketException e) {
+                        System.out.println("connection closed");
+                    }
+
                 } while (connect);
             } catch (IOException e) {
                 e.printStackTrace();
@@ -264,28 +188,145 @@ public class HTTPProxy {
 
     class writeThread extends Thread {
 
-        private PrintWriter out;
+//        private DataOutputStream out;
+        PrintWriter out;
         private int connectionID;
         private boolean connect;
 
         writeThread(PrintWriter out, int connectionID, boolean connect) {
+            System.out.println(out);
             this.out = out;
             this.connectionID = connectionID;
             this.connect = connect;
         }
 
         public void run () {
+            System.out.println("write thread: " + connectionID);
+            BlockingQueue<char[]> buffer = buffers.get(connectionID);
             try {
                 do {
-                    String packet = buffers.get(connectionID).take();
-                    System.out.println("write:" + packet);
-                    out.write(packet);
-                    out.flush();
+                    char[] packet;
+                    int counter = 0;
+                    while ((packet = buffer.take()) != null) {
+//                        System.out.println("out: " + packet.length());
+//                        try {
+                            out.print(packet);
+                            out.flush();
+//                        } catch (IOException e) {
+//                            e.printStackTrace();
+//                        }
+
+                        System.out.println("write thread: " + connectionID + "counter: " + counter);
+                        counter++;
+                    }
+                    System.out.println("OUT OF WRITE LOOP");
                 } while (connect);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
         }
     }
+
+    class SetupThread extends Thread {
+
+        Socket clientSocket;
+
+        public SetupThread(Socket clientSocket) {
+            this.clientSocket = clientSocket;
+        }
+
+        public void run() {
+//            PrintWriter clientOut = null;
+            DataOutputStream clientOut = null;
+            BufferedReader clientIn = null;
+            String request;
+            int clientToHostID = getConnectionID();
+            try {
+                System.out.println(3);
+//                clientOut =
+//                        new PrintWriter(clientSocket.getOutputStream(), true);
+                clientOut = new DataOutputStream(clientSocket.getOutputStream());
+                clientIn = new BufferedReader(
+                        new InputStreamReader(clientSocket.getInputStream()));
+            } catch (IOException e) {
+                System.out.println(e);
+            }
+            request = getModifiedRequest(clientIn);
+            System.out.println(4);
+            if (request.trim().length() > 0) {
+                INetAddress address = getAddressFromMessage(request);
+                System.out.println(5);
+
+                PrintWriter hostOut = null;
+//                DataOutputStream hostOut = null;
+//                BufferedReader hostIn = null;
+                InputStream hostIn = null;
+                int hostToClientID = getConnectionID();
+                InputStream i = null;
+                try {
+                    Socket hostSocket = new Socket();
+                    System.out.println(6);
+                    InetSocketAddress addr = new InetSocketAddress(0);
+                    hostSocket.bind(addr);
+                    hostSocket.connect(new InetSocketAddress(address.getHost(), address.getPort()));
+                    System.out.println(7);
+//                    hostOut = new DataOutputStream(hostSocket.getOutputStream());
+                    hostOut = new PrintWriter(hostSocket.getOutputStream(), true);
+//                    hostIn = new BufferedReader(
+//                            new InputStreamReader(hostSocket.getInputStream()));
+                    hostIn = hostSocket.getInputStream();
+                    i = hostSocket.getInputStream();
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                boolean connect = request.startsWith("CONNECT");
+
+
+//                BlockingQueue<char[]> clientToHost = new LinkedBlockingQueue<>();
+//                BlockingQueue<char[]> hostToClient = new LinkedBlockingQueue<>();
+//                clientToHost.add(request.toCharArray());
+//                buffers.put(clientToHostID, clientToHost);
+//                buffers.put(hostToClientID, hostToClient);
+//
+//                System.out.println(8);
+//                Thread clientRead = new readThread(clientIn, clientToHostID, connect, i);
+//                Thread clientWrite = new writeThread(clientOut, hostToClientID, connect);
+//                Thread hostRead = new readThread(hostIn, hostToClientID, connect, i);
+//                Thread hostWrite = new writeThread(hostOut, clientToHostID, connect);
+//                hostWrite.start();
+//                hostRead.start();
+//                clientWrite.start();
+
+                ////////////////
+
+                hostOut.print(request);
+                hostOut.flush();
+
+                byte[] buffer = new byte[8192];
+                int bytesRead = 0;
+                try {
+                    bytesRead = hostIn.read(buffer);
+                } catch (IOException e) {
+                    e.printStackTrace();
+                }
+                while (bytesRead > 0) {
+                    try {
+                        clientOut.write(buffer, 0, bytesRead);
+                        clientOut.flush();
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                    try {
+                        bytesRead = hostIn.read(buffer);
+                    } catch (IOException e) {
+                        e.printStackTrace();
+                    }
+                }
+//                clientRead.start();
+//                System.out.println(9);
+            }
+        }
+    }
+
 
 }
